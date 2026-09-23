@@ -35,7 +35,7 @@ from telethon.tl.functions.users import GetFullUserRequest
 load_dotenv()
 
 logging.basicConfig(level=logging.ERROR)
-log = logging.getLogger("@pro_utaggerbot")
+log = logging.getLogger("@master_utagbot")
 
 def required_env(name: str) -> str:
     value = os.getenv(name)
@@ -48,7 +48,7 @@ API_ID    = int(required_env("API_ID"))
 API_HASH  = required_env("API_HASH")
 BOT_TOKEN = required_env("BOT_TOKEN")
 # Asosiy ega
-OWNER_ID = 8332917594
+OWNER_ID = 8347643369
 ADMIN_ID = OWNER_ID
 ADMIN_IDS = {OWNER_ID}
 for admin_id in os.getenv("ADMIN_IDS", "").split(","):
@@ -57,18 +57,20 @@ for admin_id in os.getenv("ADMIN_IDS", "").split(","):
             ADMIN_IDS.add(int(admin_id.strip()))
     except ValueError:
         log.warning("ADMIN_IDS ichida noto'g'ri Telegram ID: %s", admin_id)
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@owapro")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@org_orifovc")
 ADMIN_USERNAMES = [
     username.strip() if username.strip().startswith("@") else f"@{username.strip()}"
     for username in os.getenv("ADMIN_USERNAMES", ADMIN_USERNAME).split(",")
     if username.strip()
 ]
 ADMIN_CONTACT_TEXT = " yoki ".join(ADMIN_USERNAMES)
-DB_FILE   = os.getenv("DB_FILE", os.path.join(os.path.dirname(__file__), "database22.db"))
+# Railway persistent storage uchun path
+data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", os.path.dirname(__file__))
+DB_FILE   = os.getenv("DB_FILE", os.path.join(data_dir, "database22.db"))
 
-AD_TEXT = "🤖 Powered by @pro_utaggerbot 🚀 Bepul Utag xizmati | Bir bosishda tag 🤖."
-BIO_AD_TEXT = "🤖 Powered by @pro_utaggerbot 🚀"
-AUTO_REPLY_AD = f"{AD_TEXT}\n🤖 @pro_utaggerbot orqali avto javob qilindi."
+AD_TEXT = "🤖 Powered by @master_utagbot 🚀 Bepul Utag xizmati | Bir bosishda tag 🤖."
+BIO_AD_TEXT = "🤖 Powered by @master_utagbot 🚀"
+AUTO_REPLY_AD = f"{AD_TEXT}\n🤖 @master_utagbot orqali avto javob qilindi."
 SOURCE_FILE = os.getenv("SOURCE_FILE", __file__)
 
 storage = MemoryStorage()
@@ -154,6 +156,10 @@ class UserStatesGroup(StatesGroup):
     safe_utag_group        = State()
     incident_reason        = State()
     module_toggle          = State()
+    welcome_chat_id        = State()
+    welcome_text           = State()
+    goodbye_chat_id        = State()
+    goodbye_text           = State()
 
 # ─────────────────────────────────────────────
 # DB
@@ -424,6 +430,155 @@ async def init_db():
             )
         await db.commit()
 
+        # ─────────────────────────────────────────────
+        # GROUP MANAGEMENT TABLES
+        # ─────────────────────────────────────────────
+        
+        # Guruh statistikasi
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS group_stats (
+            chat_id TEXT PRIMARY KEY,
+            title TEXT,
+            member_count INTEGER,
+            message_count INTEGER,
+            last_activity TEXT,
+            updated_at TEXT
+        )""")
+        
+        # Kunlik faollik
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS daily_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            date TEXT,
+            new_members INTEGER,
+            left_members INTEGER,
+            messages INTEGER,
+            UNIQUE(chat_id, date)
+        )""")
+        
+        # Member faolligi
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS member_activity (
+            chat_id TEXT,
+            user_id TEXT,
+            username TEXT,
+            message_count INTEGER DEFAULT 0,
+            last_seen TEXT,
+            joined_at TEXT,
+            PRIMARY KEY(chat_id, user_id)
+        )""")
+        
+        # Spam qoidalari
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS spam_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            rule_type TEXT,
+            pattern TEXT,
+            action TEXT,
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT
+        )""")
+        
+        # Spam loglari
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS spam_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            user_id TEXT,
+            username TEXT,
+            rule_id INTEGER,
+            action_taken TEXT,
+            message_content TEXT,
+            created_at TEXT
+        )""")
+        
+        # Welcome shablonlari
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS welcome_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            template_text TEXT,
+            media_type TEXT,
+            media_file_id TEXT,
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT
+        )""")
+        
+        # Goodbye shablonlari
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS goodbye_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            template_text TEXT,
+            media_type TEXT,
+            media_file_id TEXT,
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT
+        )""")
+        
+        # Moderation actions
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS moderation_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            admin_id TEXT,
+            target_user_id TEXT,
+            action_type TEXT,
+            reason TEXT,
+            duration INTEGER,
+            created_at TEXT
+        )""")
+        
+        # Warnings
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS warnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            user_id TEXT,
+            admin_id TEXT,
+            reason TEXT,
+            created_at TEXT
+        )""")
+        
+        # Moderation logs
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS mod_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            admin_id TEXT,
+            action TEXT,
+            details TEXT,
+            created_at TEXT
+        )""")
+        
+        # Member stats
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS member_stats (
+            chat_id TEXT,
+            user_id TEXT,
+            total_messages INTEGER DEFAULT 0,
+            total_reactions INTEGER DEFAULT 0,
+            avg_daily_messages REAL,
+            activity_score REAL,
+            last_active TEXT,
+            updated_at TEXT,
+            PRIMARY KEY(chat_id, user_id)
+        )""")
+        
+        # Activity records
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS activity_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT,
+            user_id TEXT,
+            action_type TEXT,
+            timestamp TEXT
+        )""")
+        
+        await db.commit()
+
 # ─────────────────────────────────────────────
 # CHANNEL HELPERS
 # ─────────────────────────────────────────────
@@ -465,6 +620,24 @@ async def check_subscriptions(user_id: int) -> bool:
             log.warning("Skipping unreachable or invalid channel %s during subscription check: %s", ch["username"], exc)
             continue
     return True
+
+
+async def check_bot_in_channels(channel_usernames: list[str]) -> tuple[bool, list[str]]:
+    """Bot berilgan kanallarga qo'shilganligini tekshiradi"""
+    not_joined = []
+    bot_info = await bot.get_me()
+    bot_id = bot_info.id
+    
+    for ch in channel_usernames:
+        try:
+            member = await bot.get_chat_member(chat_id=ch, user_id=bot_id)
+            if member.status in ["left", "kicked"]:
+                not_joined.append(ch)
+        except Exception as exc:
+            log.warning("Bot kanalga qo'shilmagan yoki kanal topilmadi %s: %s", ch, exc)
+            not_joined.append(ch)
+    
+    return len(not_joined) == 0, not_joined
 
 # ─────────────────────────────────────────────
 # PRO HELPERS
@@ -868,7 +1041,7 @@ async def pro_expiration_checker():
                                 await bot.send_message(
                                     int(uid),
                                     "⚠️ <b>Sizning pro tarif rejangiz tugamoqda!</b>\n\n"
-                                    "Agar yana sotib olmoqchi bo'lsangiz @owapro ga murojaat qiling "
+                                    "Agar yana sotib olmoqchi bo'lsangiz @org_orifovc ga murojaat qiling "
                                     "yoki yana 3 ta do'stingizni botimizga taklif qiling."
                                 )
                             except Exception:
@@ -2073,6 +2246,7 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
     kb.row(InlineKeyboardButton(text="📣 Xabar tarqatish", callback_data="admin_broadcast"))
     kb.row(InlineKeyboardButton(text="🛒 So'zlar Marketini boshqarish", callback_data="admin_word_market"))
     kb.row(InlineKeyboardButton(text="🧩 Safe Management", callback_data="safe_ext"))
+    kb.row(InlineKeyboardButton(text="👨‍💼 Guruh boshqaruvi", callback_data="group_management"))
     return kb.as_markup()
 
 def get_admin_channels_keyboard(channels: list[dict]) -> InlineKeyboardMarkup:
@@ -2586,6 +2760,20 @@ async def contest_prize_input(message: Message, state: FSMContext):
     prize_text  = message.text.strip()
     req_ch_str  = ",".join(req_ch_list) if req_ch_list else ""
 
+    # Bot majburiy kanallarga qo'shilganligini tekshirish
+    if req_ch_list:
+        bot_in_channels, not_joined = await check_bot_in_channels(req_ch_list)
+        if not bot_in_channels:
+            await message.answer(
+                f"⚠️ <b>Bot quyidagi kanallarga qo'shilmagan:</b>\n\n"
+                + "\n".join(f"• {ch}" for ch in not_joined) +
+                "\n\n❌ <b>Konkursni yaratishdan oldin botni ushbu kanallarga qo'shing!</b>\n\n"
+                "Bu shart, chunki bot foydalanuvchilarning kanallarga a'zoligini tekshirishi kerak.",
+                reply_markup=get_admin_keyboard()
+            )
+            await state.clear()
+            return
+
     # Konkurs xabarini kanalga yubor
     req_ch_display = "\n".join(f"• {c}" for c in req_ch_list) if req_ch_list else "Yo'q"
     contest_text = (
@@ -2756,13 +2944,23 @@ async def cb_join_contest(callback: CallbackQuery):
     # Majburiy kanallarga obunani tekshirish
     req_channels = [c for c in req_ch_str.split(",") if c] if req_ch_str else []
     not_joined = []
+    bot_channels_issue = []
+    
     for ch in req_channels:
         try:
             member = await bot.get_chat_member(chat_id=ch, user_id=int(user_id))
             if member.status in ["left", "kicked"]:
                 not_joined.append(ch)
-        except Exception:
+        except Exception as exc:
+            # Agar bot kanalga qo'shilmagan bo'lsa, bu ma'lumotni log qilamiz
+            log.error("Bot %s kanalida foydalanuvchi a'zoligini tekshira olmadi: %s", ch, exc)
+            bot_channels_issue.append(ch)
+            # Bot kanalda bo'lmaganda, foydalanuvchini ham a'zo bo'lmagan deb hisoblaymiz
             not_joined.append(ch)
+
+    if bot_channels_issue:
+        # Agar bot kanallarga qo'shilmagan bo'lsa, adminni ogohlantiramiz
+        log.error("Bot quyidagi kanallarga qo'shilmagan: %s", ", ".join(bot_channels_issue))
 
     if not_joined:
         kb = InlineKeyboardBuilder()
@@ -3929,6 +4127,692 @@ async def safe_ext(callback:CallbackQuery):
         await callback.answer("🔒 Faqat admin.",show_alert=True)
         return
     await callback.message.edit_text("🧩 <b>Safe Management</b>",reply_markup=safe_menu())
+
+# ─────────────────────────────────────────────
+# GROUP MANAGEMENT
+# ─────────────────────────────────────────────
+def get_group_management_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📊 Guruh statistikasi", callback_data="group_stats"))
+    kb.row(InlineKeyboardButton(text="🛡 Spam filter", callback_data="spam_filter"))
+    kb.row(InlineKeyboardButton(text="👋 Welcome/Goodbye", callback_data="welcome_system"))
+    kb.row(InlineKeyboardButton(text="🔨 Moderation tools", callback_data="moderation"))
+    kb.row(InlineKeyboardButton(text="👥 Member monitoring", callback_data="member_monitoring"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_panel"))
+    return kb.as_markup()
+
+@dp.callback_query(F.data == "group_management")
+async def cb_group_management(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "👨‍💼 <b>Guruh boshqaruvi</b>\n\n"
+        "Guruhlarni boshqarish uchun quyidagi vositalar mavjud:",
+        reply_markup=get_group_management_keyboard()
+    )
+
+# ---------- Group Statistics ----------
+@dp.callback_query(F.data == "group_stats")
+async def cb_group_stats(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("SELECT COUNT(*) FROM group_stats") as cur:
+            total_groups = (await cur.fetchone())[0]
+        async with db.execute("SELECT chat_id, title, member_count, message_count FROM group_stats ORDER BY member_count DESC LIMIT 5") as cur:
+            top_groups = await cur.fetchall()
+    
+    text = f"📊 <b>Guruh statistikasi</b>\n\n"
+    text += f"👥 Jami guruhlar: <b>{total_groups}</b>\n\n"
+    
+    if top_groups:
+        text += "<b>Top 5 guruh (azolar soni bo'yicha):</b>\n"
+        for chat_id, title, members, messages in top_groups:
+            display_title = title or chat_id
+            text += f"• {html.escape(display_title)}: {members} azo, {messages} xabar\n"
+    else:
+        text += "Hozircha statistika yo'q. Bot guruhlarga qo'shilganda ma'lumotlar to'planadi."
+    
+    await callback.message.edit_text(text, reply_markup=get_group_management_keyboard())
+
+# ---------- Spam Filter ----------
+@dp.callback_query(F.data == "spam_filter")
+async def cb_spam_filter(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("SELECT COUNT(*) FROM spam_rules") as cur:
+            total_rules = (await cur.fetchone())[0]
+        async with db.execute("SELECT rule_type, pattern, action, enabled FROM spam_rules ORDER BY id DESC LIMIT 5") as cur:
+            recent_rules = await cur.fetchall()
+    
+    text = f"🛡 <b>Spam filter</b>\n\n"
+    text += f"📋 Jami qoidalar: <b>{total_rules}</b>\n\n"
+    
+    if recent_rules:
+        text += "<b>So'nggi qoidalar:</b>\n"
+        for rule_type, pattern, action, enabled in recent_rules:
+            status = "✅" if enabled else "❌"
+            text += f"{status} {rule_type}: {html.escape(pattern[:30])} -> {action}\n"
+    else:
+        text += "Hozircha spam qoidalari yo'q."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="➕ Qoida qo'shish", callback_data="spam_add_rule"))
+    kb.row(InlineKeyboardButton(text="📋 Qoidalar ro'yxati", callback_data="spam_list_rules"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="group_management"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Welcome/Goodbye System ----------
+@dp.callback_query(F.data == "welcome_system")
+async def cb_welcome_system(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("SELECT COUNT(*) FROM welcome_templates") as cur:
+            welcome_count = (await cur.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM goodbye_templates") as cur:
+            goodbye_count = (await cur.fetchone())[0]
+        async with db.execute("SELECT chat_id, template_text FROM welcome_templates LIMIT 5") as cur:
+            welcome_templates = await cur.fetchall()
+        async with db.execute("SELECT chat_id, template_text FROM goodbye_templates LIMIT 5") as cur:
+            goodbye_templates = await cur.fetchall()
+    
+    text = "👋 <b>Welcome/Goodbye System</b>\n\n"
+    text += f"📝 Welcome shablonlari: <b>{welcome_count}</b>\n"
+    text += f"📝 Goodbye shablonlari: <b>{goodbye_count}</b>\n\n"
+    
+    if welcome_templates:
+        text += "<b>Welcome shablonlari:</b>\n"
+        for chat_id, template_text in welcome_templates:
+            text += f"• {chat_id}: {template_text[:30]}...\n"
+    
+    if goodbye_templates:
+        text += "\n<b>Goodbye shablonlari:</b>\n"
+        for chat_id, template_text in goodbye_templates:
+            text += f"• {chat_id}: {template_text[:30]}...\n"
+    
+    text += "\nYangi a'zolarga avtomatik welcome xabar va chiqqanlarga goodbye xabar yuborish."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="➕ Welcome shablon", callback_data="welcome_add"))
+    kb.row(InlineKeyboardButton(text="➕ Goodbye shablon", callback_data="goodbye_add"))
+    kb.row(InlineKeyboardButton(text="📋 Shablonlar ro'yxati", callback_data="welcome_list"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="group_management"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# Add welcome template
+@dp.callback_query(F.data == "welcome_add")
+async def cb_welcome_add(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    await state.set_state(UserStatesGroup.welcome_chat_id)
+    await callback.message.edit_text(
+        "👋 <b>Welcome shablon qo'shish</b>\n\n"
+        "Avval guruh ID'sini yuboring (masalan: -1001234567890):",
+        reply_markup=back_kb("welcome_system")
+    )
+
+@dp.message(StateFilter(UserStatesGroup.welcome_chat_id), F.text)
+async def welcome_chat_id_input(message: Message, state: FSMContext):
+    chat_id = message.text.strip()
+    await state.update_data(welcome_chat_id=chat_id)
+    await state.set_state(UserStatesGroup.welcome_text)
+    await message.answer(
+        "Endi welcome matnini yuboring.\n\n"
+        "O'zgaruvchilar:\n"
+        "{name} - username\n"
+        "{fullname} - to'liq ism",
+        reply_markup=back_kb("welcome_system")
+    )
+
+@dp.message(StateFilter(UserStatesGroup.welcome_text), F.text)
+async def welcome_text_input(message: Message, state: FSMContext):
+    template_text = message.text.strip()
+    data = await state.get_data()
+    chat_id = data.get("welcome_chat_id")
+    
+    if not chat_id:
+        await message.answer("❌ Xatolik yuz berdi. Qaytadan urining.")
+        await state.clear()
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO welcome_templates (chat_id, template_text, media_type, media_file_id, enabled, created_at) VALUES (?, ?, 'text', NULL, 1, ?)",
+            (chat_id, template_text, datetime.now(timezone.utc).isoformat())
+        )
+        await db.commit()
+    
+    await state.clear()
+    await message.answer(
+        f"✅ Welcome shablon qo'shildi!\n\n"
+        f"Guruh: {chat_id}\n"
+        f"Matn: {template_text[:50]}...",
+        reply_markup=get_group_management_keyboard()
+    )
+
+# Add goodbye template
+@dp.callback_query(F.data == "goodbye_add")
+async def cb_goodbye_add(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    await state.set_state(UserStatesGroup.goodbye_chat_id)
+    await callback.message.edit_text(
+        "👋 <b>Goodbye shablon qo'shish</b>\n\n"
+        "Avval guruh ID'sini yuboring (masalan: -1001234567890):",
+        reply_markup=back_kb("welcome_system")
+    )
+
+@dp.message(StateFilter(UserStatesGroup.goodbye_chat_id), F.text)
+async def goodbye_chat_id_input(message: Message, state: FSMContext):
+    chat_id = message.text.strip()
+    await state.update_data(goodbye_chat_id=chat_id)
+    await state.set_state(UserStatesGroup.goodbye_text)
+    await message.answer(
+        "Endi goodbye matnini yuboring.\n\n"
+        "O'zgaruvchilar:\n"
+        "{name} - username\n"
+        "{fullname} - to'liq ism",
+        reply_markup=back_kb("welcome_system")
+    )
+
+@dp.message(StateFilter(UserStatesGroup.goodbye_text), F.text)
+async def goodbye_text_input(message: Message, state: FSMContext):
+    template_text = message.text.strip()
+    data = await state.get_data()
+    chat_id = data.get("goodbye_chat_id")
+    
+    if not chat_id:
+        await message.answer("❌ Xatolik yuz berdi. Qaytadan urining.")
+        await state.clear()
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO goodbye_templates (chat_id, template_text, media_type, media_file_id, enabled, created_at) VALUES (?, ?, 'text', NULL, 1, ?)",
+            (chat_id, template_text, datetime.now(timezone.utc).isoformat())
+        )
+        await db.commit()
+    
+    await state.clear()
+    await message.answer(
+        f"✅ Goodbye shablon qo'shildi!\n\n"
+        f"Guruh: {chat_id}\n"
+        f"Matn: {template_text[:50]}...",
+        reply_markup=get_group_management_keyboard()
+    )
+
+# List templates
+@dp.callback_query(F.data == "welcome_list")
+async def cb_welcome_list(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("SELECT chat_id, template_text, enabled FROM welcome_templates") as cur:
+            welcome_templates = await cur.fetchall()
+        async with db.execute("SELECT chat_id, template_text, enabled FROM goodbye_templates") as cur:
+            goodbye_templates = await cur.fetchall()
+    
+    text = "📋 <b>Shablonlar ro'yxati</b>\n\n"
+    
+    text += "<b>Welcome shablonlari:</b>\n"
+    if welcome_templates:
+        for chat_id, template_text, enabled in welcome_templates:
+            status = "✅" if enabled else "❌"
+            text += f"{status} {chat_id}: {template_text[:40]}...\n"
+    else:
+        text += "Welcome shablonlari yo'q.\n"
+    
+    text += "\n<b>Goodbye shablonlari:</b>\n"
+    if goodbye_templates:
+        for chat_id, template_text, enabled in goodbye_templates:
+            status = "✅" if enabled else "❌"
+            text += f"{status} {chat_id}: {template_text[:40]}...\n"
+    else:
+        text += "Goodbye shablonlari yo'q."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="welcome_system"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Moderation Tools ----------
+@dp.callback_query(F.data == "moderation")
+async def cb_moderation(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("SELECT COUNT(*) FROM moderation_actions") as cur:
+            total_actions = (await cur.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM warnings") as cur:
+            total_warnings = (await cur.fetchone())[0]
+    
+    text = "🔨 <b>Moderation tools</b>\n\n"
+    text += f"⚡ Moderation actions: <b>{total_actions}</b>\n"
+    text += f"⚠️ Warnings: <b>{total_warnings}</b>\n\n"
+    text += "Ban/kick/mute, warning tizimi va bulk actions."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📋 Moderation log", callback_data="mod_log"))
+    kb.row(InlineKeyboardButton(text="⚠️ Warnings ro'yxati", callback_data="mod_warnings"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="group_management"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Member Monitoring ----------
+@dp.callback_query(F.data == "member_monitoring")
+async def cb_member_monitoring(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("SELECT COUNT(*) FROM member_stats") as cur:
+            total_members = (await cur.fetchone())[0]
+        async with db.execute("SELECT user_id, total_messages, activity_score FROM member_stats ORDER BY activity_score DESC LIMIT 5") as cur:
+            top_active = await cur.fetchall()
+    
+    text = "👥 <b>Member monitoring</b>\n\n"
+    text += f"👤 Kuzatilayotgan a'zolar: <b>{total_members}</b>\n\n"
+    
+    if top_active:
+        text += "<b>Eng faol a'zolar (Top 5):</b>\n"
+        for user_id, messages, score in top_active:
+            text += f"• {user_id}: {messages} xabar, score: {score:.1f}\n"
+    else:
+        text += "Hozircha monitoring ma'lumotlari yo'q."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🔍 Tinch a'zolar", callback_data="member_inactive"))
+    kb.row(InlineKeyboardButton(text="📊 Faollik heatmap", callback_data="member_heatmap"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="group_management"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Inactive Members ----------
+@dp.callback_query(F.data == "member_inactive")
+async def cb_member_inactive(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    # Members inactive for more than 30 days
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute(
+            "SELECT user_id, total_messages, last_active FROM member_stats WHERE last_active < ? ORDER BY last_active ASC LIMIT 10",
+            (cutoff_date,)
+        ) as cur:
+            inactive_members = await cur.fetchall()
+    
+    text = "🔍 <b>Tinch a'zolar (30+ kun)</b>\n\n"
+    
+    if inactive_members:
+        text += f"Jami: <b>{len(inactive_members)} ta</b>\n\n"
+        for user_id, messages, last_active in inactive_members:
+            days_inactive = (datetime.now(timezone.utc) - datetime.fromisoformat(last_active)).days
+            text += f"• {user_id}: {messages} xabar, {days_inactive} kun oldin faol\n"
+    else:
+        text += "Tinch a'zolar topilmadi."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="member_monitoring"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Activity Heatmap ----------
+@dp.callback_query(F.data == "member_heatmap")
+async def cb_member_heatmap(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    # Simple activity distribution by hour
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("""
+            SELECT strftime('%H', timestamp) as hour, COUNT(*) as count 
+            FROM activity_records 
+            WHERE action_type = 'message' AND timestamp > datetime('now', '-7 days')
+            GROUP BY hour 
+            ORDER BY hour
+        """) as cur:
+            hourly_activity = await cur.fetchall()
+    
+    text = "📊 <b>Faollik heatmap (so'ng 7 kun)</b>\n\n"
+    
+    if hourly_activity:
+        # Create simple text visualization
+        max_count = max(count for _, count in hourly_activity) if hourly_activity else 1
+        for hour, count in hourly_activity:
+            bar_length = int((count / max_count) * 10) if max_count > 0 else 0
+            bar = "█" * bar_length
+            text += f"{hour:02d}:00 {bar} {count}\n"
+    else:
+        text += "Ma'lumotlar yo'q."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="member_monitoring"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Moderation Log ----------
+@dp.callback_query(F.data == "mod_log")
+async def cb_mod_log(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("""
+            SELECT chat_id, admin_id, action, details, created_at 
+            FROM mod_logs 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        """) as cur:
+            mod_actions = await cur.fetchall()
+    
+    text = "📋 <b>Moderation log</b>\n\n"
+    
+    if mod_actions:
+        for chat_id, admin_id, action, details, created_at in mod_actions:
+            time_str = datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
+            text += f"[{time_str}] {admin_id} -> {action}\n"
+            if details:
+                text += f"   {details[:50]}...\n"
+            text += "\n"
+    else:
+        text += "Moderation actions yo'q."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="moderation"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ---------- Warnings List ----------
+@dp.callback_query(F.data == "mod_warnings")
+async def cb_mod_warnings(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("🔒 Faqat admin.", show_alert=True)
+        return
+    
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("""
+            SELECT chat_id, user_id, admin_id, reason, created_at 
+            FROM warnings 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        """) as cur:
+            warnings_list = await cur.fetchall()
+    
+    text = "⚠️ <b>Warnings ro'yxati</b>\n\n"
+    
+    if warnings_list:
+        for chat_id, user_id, admin_id, reason, created_at in warnings_list:
+            time_str = datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
+            text += f"[{time_str}] {admin_id} -> {user_id}\n"
+            text += f"   Sabab: {reason[:40]}...\n\n"
+    else:
+        text += "Warnings yo'q."
+    
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="moderation"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+# ─────────────────────────────────────────────
+# GROUP EVENT HANDLERS
+# ─────────────────────────────────────────────
+
+# New member join handler
+@dp.message(F.new_chat_members, F.chat.type.in_(["group", "supergroup"]))
+async def on_new_member(message: Message):
+    chat_id = str(message.chat.id)
+    chat_title = message.chat.title or ""
+    
+    for new_member in message.new_chat_members:
+        user_id = str(new_member.id)
+        username = new_member.username or ""
+        fullname = new_member.full_name or ""
+        
+        # Stats update
+        try:
+            async with aiosqlite.connect(DB_FILE) as db:
+                # Update group stats
+                await db.execute("""
+                    INSERT OR REPLACE INTO group_stats (chat_id, title, member_count, message_count, last_activity, updated_at)
+                    VALUES (?, ?, COALESCE((SELECT member_count FROM group_stats WHERE chat_id = ?), 0) + 1, 
+                           COALESCE((SELECT message_count FROM group_stats WHERE chat_id = ?), 0), ?, ?)
+                """, (chat_id, chat_title, chat_id, chat_id, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
+                
+                # Update daily activity
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                await db.execute("""
+                    INSERT INTO daily_activity (chat_id, date, new_members, left_members, messages)
+                    VALUES (?, ?, 1, 0, 0)
+                    ON CONFLICT(chat_id, date) DO UPDATE SET new_members = new_members + 1
+                """, (chat_id, today))
+                
+                # Add member activity
+                await db.execute("""
+                    INSERT OR REPLACE INTO member_activity (chat_id, user_id, username, message_count, last_seen, joined_at)
+                    VALUES (?, ?, ?, 0, ?, ?)
+                """, (chat_id, user_id, username, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
+                
+                # Add activity record
+                await db.execute("""
+                    INSERT INTO activity_records (chat_id, user_id, action_type, timestamp)
+                    VALUES (?, ?, 'join', ?)
+                """, (chat_id, user_id, datetime.now(timezone.utc).isoformat()))
+                
+                await db.commit()
+        except Exception as e:
+            log.error(f"New member stats update error: {e}")
+        
+        # Send welcome message if template exists
+        try:
+            async with aiosqlite.connect(DB_FILE) as db:
+                async with db.execute(
+                    "SELECT template_text, media_type, media_file_id FROM welcome_templates WHERE chat_id = ? AND enabled = 1",
+                    (chat_id,)
+                ) as cur:
+                    welcome_row = await cur.fetchone()
+            
+            if welcome_row:
+                template_text, media_type, media_file_id = welcome_row
+                mention = f"@{username}" if username else f"<a href='tg://user?id={user_id}'>{fullname}</a>"
+                welcome_text = template_text.replace("{name}", mention).replace("{fullname}", fullname)
+                
+                if media_type == "photo" and media_file_id:
+                    await message.answer_photo(photo=media_file_id, caption=welcome_text)
+                elif media_type == "video" and media_file_id:
+                    await message.answer_video(video=media_file_id, caption=welcome_text)
+                elif media_type == "sticker" and media_file_id:
+                    await message.answer_sticker(sticker=media_file_id)
+                else:
+                    await message.answer(welcome_text)
+        except Exception as e:
+            log.error(f"Welcome message error: {e}")
+
+# Member leave handler
+@dp.message(F.left_chat_member, F.chat.type.in_(["group", "supergroup"]))
+async def on_member_leave(message: Message):
+    chat_id = str(message.chat.id)
+    chat_title = message.chat.title or ""
+    
+    left_member = message.left_chat_member
+    user_id = str(left_member.id)
+    username = left_member.username or ""
+    fullname = left_member.full_name or ""
+    
+    # Stats update
+    try:
+        async with aiosqlite.connect(DB_FILE) as db:
+            # Update group stats
+            await db.execute("""
+                INSERT OR REPLACE INTO group_stats (chat_id, title, member_count, message_count, last_activity, updated_at)
+                VALUES (?, ?, COALESCE((SELECT member_count FROM group_stats WHERE chat_id = ?), 0) - 1, 
+                       COALESCE((SELECT message_count FROM group_stats WHERE chat_id = ?), 0), ?, ?)
+            """, (chat_id, chat_title, chat_id, chat_id, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
+            
+            # Update daily activity
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            await db.execute("""
+                INSERT INTO daily_activity (chat_id, date, new_members, left_members, messages)
+                VALUES (?, ?, 0, 1, 0)
+                ON CONFLICT(chat_id, date) DO UPDATE SET left_members = left_members + 1
+            """, (chat_id, today))
+            
+            # Remove member activity
+            await db.execute("DELETE FROM member_activity WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+            
+            # Add activity record
+            await db.execute("""
+                INSERT INTO activity_records (chat_id, user_id, action_type, timestamp)
+                VALUES (?, ?, 'leave', ?)
+            """, (chat_id, user_id, datetime.now(timezone.utc).isoformat()))
+            
+            await db.commit()
+    except Exception as e:
+        log.error(f"Member leave stats update error: {e}")
+    
+    # Send goodbye message if template exists
+    try:
+        async with aiosqlite.connect(DB_FILE) as db:
+            async with db.execute(
+                "SELECT template_text, media_type, media_file_id FROM goodbye_templates WHERE chat_id = ? AND enabled = 1",
+                (chat_id,)
+            ) as cur:
+                goodbye_row = await cur.fetchone()
+        
+        if goodbye_row:
+            template_text, media_type, media_file_id = goodbye_row
+            mention = f"@{username}" if username else fullname
+            goodbye_text = template_text.replace("{name}", mention).replace("{fullname}", fullname)
+            
+            if media_type == "photo" and media_file_id:
+                await message.answer_photo(photo=media_file_id, caption=goodbye_text)
+            elif media_type == "video" and media_file_id:
+                await message.answer_video(video=media_file_id, caption=goodbye_text)
+            elif media_type == "sticker" and media_file_id:
+                await message.answer_sticker(sticker=media_file_id)
+            else:
+                await message.answer(goodbye_text)
+    except Exception as e:
+        log.error(f"Goodbye message error: {e}")
+
+# Activity tracking handler
+@dp.message(F.chat.type.in_(["group", "supergroup"]))
+async def track_group_activity(message: Message):
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    username = message.from_user.username or ""
+    fullname = message.from_user.full_name or ""
+    
+    try:
+        async with aiosqlite.connect(DB_FILE) as db:
+            # Update group stats
+            await db.execute("""
+                INSERT OR REPLACE INTO group_stats (chat_id, title, member_count, message_count, last_activity, updated_at)
+                VALUES (?, ?, COALESCE((SELECT member_count FROM group_stats WHERE chat_id = ?), 0), 
+                       COALESCE((SELECT message_count FROM group_stats WHERE chat_id = ?), 0) + 1, ?, ?)
+            """, (chat_id, message.chat.title or "", chat_id, chat_id, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
+            
+            # Update daily activity
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            await db.execute("""
+                INSERT INTO daily_activity (chat_id, date, new_members, left_members, messages)
+                VALUES (?, ?, 0, 0, 1)
+                ON CONFLICT(chat_id, date) DO UPDATE SET messages = messages + 1
+            """, (chat_id, today))
+            
+            # Update member activity
+            await db.execute("""
+                INSERT OR REPLACE INTO member_activity (chat_id, user_id, username, message_count, last_seen, joined_at)
+                VALUES (?, ?, ?, COALESCE((SELECT message_count FROM member_activity WHERE chat_id = ? AND user_id = ?), 0) + 1, ?, 
+                       COALESCE((SELECT joined_at FROM member_activity WHERE chat_id = ? AND user_id = ?), ?))
+            """, (chat_id, user_id, username, chat_id, user_id, datetime.now(timezone.utc).isoformat(), chat_id, user_id, datetime.now(timezone.utc).isoformat()))
+            
+            # Update member stats
+            await db.execute("""
+                INSERT OR REPLACE INTO member_stats (chat_id, user_id, total_messages, total_reactions, avg_daily_messages, activity_score, last_active, updated_at)
+                VALUES (?, ?, COALESCE((SELECT total_messages FROM member_stats WHERE chat_id = ? AND user_id = ?), 0) + 1, 
+                       COALESCE((SELECT total_reactions FROM member_stats WHERE chat_id = ? AND user_id = ?), 0), 
+                       COALESCE((SELECT avg_daily_messages FROM member_stats WHERE chat_id = ? AND user_id = ?), 0), 
+                       COALESCE((SELECT activity_score FROM member_stats WHERE chat_id = ? AND user_id = ?), 0) + 0.1, ?, ?)
+            """, (chat_id, user_id, chat_id, user_id, chat_id, user_id, chat_id, user_id, chat_id, user_id, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
+            
+            # Add activity record
+            await db.execute("""
+                INSERT INTO activity_records (chat_id, user_id, action_type, timestamp)
+                VALUES (?, ?, 'message', ?)
+            """, (chat_id, user_id, datetime.now(timezone.utc).isoformat()))
+            
+            await db.commit()
+    except Exception as e:
+        log.error(f"Activity tracking error: {e}")
+    
+    # Spam detection
+    try:
+        async with aiosqlite.connect(DB_FILE) as db:
+            async with db.execute(
+                "SELECT id, rule_type, pattern, action FROM spam_rules WHERE chat_id = ? AND enabled = 1",
+                (chat_id,)
+            ) as cur:
+                spam_rules = await cur.fetchall()
+        
+        message_text = message.text or ""
+        for rule_id, rule_type, pattern, action in spam_rules:
+            is_spam = False
+            if rule_type == "keyword" and pattern.lower() in message_text.lower():
+                is_spam = True
+            elif rule_type == "url" and re.search(r"(https?://|t\.me/|www\.)", message_text, re.I):
+                is_spam = True
+            elif rule_type == "bot" and message.from_user.is_bot:
+                is_spam = True
+            
+            if is_spam:
+                # Log spam
+                async with aiosqlite.connect(DB_FILE) as db:
+                    await db.execute("""
+                        INSERT INTO spam_log (chat_id, user_id, username, rule_id, action_taken, message_content, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (chat_id, user_id, username, rule_id, action, message_text[:500], datetime.now(timezone.utc).isoformat()))
+                    await db.commit()
+                
+                # Take action
+                if action == "delete":
+                    try:
+                        await message.delete()
+                    except Exception:
+                        pass
+                elif action == "ban":
+                    try:
+                        await bot.ban_chat_member(chat_id, user_id)
+                    except Exception:
+                        pass
+                elif action == "mute":
+                    try:
+                        await bot.restrict_chat_member(chat_id, user_id, permissions=types.ChatPermissions(can_send_messages=False))
+                    except Exception:
+                        pass
+                elif action == "warn":
+                    try:
+                        await message.reply(f"⚠️ Spam uchun ogohlantirildi! Qoida: {pattern}")
+                    except Exception:
+                        pass
+                break
+    except Exception as e:
+        log.error(f"Spam detection error: {e}")
  
 # ---------- module toggles for admins ----------
 @dp.callback_query(F.data=="safe_modules")

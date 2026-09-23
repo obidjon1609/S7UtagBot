@@ -1,0 +1,11 @@
+[phases.build]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.start]
+cmd = "python pro.tag.10.py"
+
+[phases.install]
+cmds = ["apt-get update && apt-get install -y --no-install-recommends python3-dev"]
+
+[variables]
+PORT = "8080"
