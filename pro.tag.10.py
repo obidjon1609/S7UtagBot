@@ -64,8 +64,10 @@ ADMIN_USERNAMES = [
     if username.strip()
 ]
 ADMIN_CONTACT_TEXT = " yoki ".join(ADMIN_USERNAMES)
-# Railway persistent storage uchun path
-data_dir = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", os.path.dirname(__file__))
+# Multi-platform persistent storage uchun path
+data_dir = os.getenv("RENDER_DISK_MOUNT_PATH", 
+            os.getenv("RAILWAY_VOLUME_MOUNT_PATH", 
+            os.path.dirname(__file__)))
 DB_FILE   = os.getenv("DB_FILE", os.path.join(data_dir, "database22.db"))
 
 AD_TEXT = "🤖 Powered by @master_utagbot 🚀 Bepul Utag xizmati | Bir bosishda tag 🤖."
