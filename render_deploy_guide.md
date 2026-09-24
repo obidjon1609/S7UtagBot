@@ -8,16 +8,22 @@ Render Telegram botlar uchun mos keladi:
 - ✅ Background processes ishlaydi
 - ✅ Bepul plani bor
 
+## ⚠️ Muhim: Background Worker Uchun
+
+Telegram botlar Renderda **Background Worker** sifatida deploy qilinishi kerak, Web Service emas!
+
+<ref_file file="D:\Asosiy\tg-bots\ProTag.10\render_background_worker_guide.md" /> faylidagi to'liq yo'riqnomani ko'ring.
+
 ## 1. Render Hisob Yaratish
 
 1. https://render.com saytiga o'ting
 2. "Sign Up" tugmasini bosing
 3. GitHub bilan ulaning
 
-## 2. Repositoriyani Import Qilish
+## 2. Background Worker Yaratish
 
 1. Dashboardda "New +" tugmasini bosing
-2. "Web Service" ni tanlang
+2. **"Background Worker"** ni tanlang (Web Service emas!)
 3. GitHub repositoriyasini tanlang: `S7UtagBot`
 4. "Connect" tugmasini bosing
 
@@ -29,6 +35,7 @@ Render avtomatik Dockerfile aniqlaydi, lekin quyidagilarni tekshiring:
 - **Docker Context**: `/`
 - **Dockerfile Path**: `Dockerfile`
 - **Runtime**: Docker
+- **Instance Type**: Standard (bepul plan)
 
 ## 4. Environment Variables Sozlash
 
@@ -49,7 +56,7 @@ SOURCE_FILE=/app/pro.tag.10.py
 
 Render bepul planida persistent disk ishlaydi:
 
-1. Dashboardda Web Service bo'limiga o'ting
+1. Dashboardda Background Worker bo'limiga o'ting
 2. "Disks" bo'limiga o'ting
 3. "Add Disk" tugmasini bosing
 4. Quyidagilarni to'ldiring:
@@ -67,30 +74,24 @@ data_dir = os.getenv("RENDER_DISK_MOUNT_PATH", os.path.dirname(__file__))
 DB_FILE = os.getenv("DB_FILE", os.path.join(data_dir, "database22.db"))
 ```
 
-## 7. Health Check Sozlash (Ixtiyoriy)
+Kod allaqachon sozlangan (multi-platform support).
 
-"Health Check" bo'limida:
-- **Path**: `/`
-- **Check Interval**: 60s
-- **Timeout**: 30s
-- **Failure Threshold**: 3
+## 7. Deploy
 
-## 8. Deploy
-
-1. "Create Web Service" tugmasini bosing
+1. "Create Background Worker" tugmasini bosing
 2. Build jarayonini kuzating
 3. Bot ishga tushganda, `/start` buyrug'ini yuboring
 
-## 9. Loglarni Kuzatish
+## 8. Loglarni Kuzatish
 
 Render dashboardda:
 - **Logs** bo'limida deploy va runtime loglarini ko'rishingiz mumkin
 - **Metrics** bo'limida resurslarni kuzatishingiz mumkin
 
-## 10. Auto-Deploy Sozlash
+## 9. Auto-Deploy Sozlash
 
 GitHub'da yangi commit bo'lganda avtomatik deploy uchun:
-1. Web Service bo'limiga o'ting
+1. Background Worker bo'limiga o'ting
 2. "Settings" -> "Auto-Deploy" bo'limiga o'ting
 3. "Auto-deploy" ni yoqing
 
