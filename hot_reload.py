@@ -1,87 +1,55 @@
+#!/usr/bin/env python3
+"""
+Hot reload skripti - kod o'zgarganda avtomatik restart
+"""
 import os
 import subprocess
-import sys
 import time
-import hashlib
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
-
-def get_file_hash(filepath):
-    try:
-        with open(filepath, 'rb') as f:
-            return hashlib.md5(f.read()).hexdigest()
-    except:
-        return None
-
+class FileChangeHandler(FileSystemEventHandler):
+    def __init__(self, bot_process):
+        self.bot_process = bot_process
+        self.last_restart = time.time()
+    
+    def on_modified(self, event):
+        if event.src_path.endswith('.py') and time.time() - self.last_restart > 2:
+            print(f"🔄 {event.src_path} o'zgardi, botni restart qilmoqda...")
+            self.restart_bot()
+            self.last_restart = time.time()
+    
+    def restart_bot(self):
+        if self.bot_process:
+            self.bot_process.terminate()
+            self.bot_process.wait()
+        
+        print("🚀 Botni qayta ishga tushirish...")
+        self.bot_process = subprocess.Popen([os.path.join('.venv', 'Scripts', 'python'), 'pro.tag.10.py'])
 
 def main():
-    script_path = os.path.join(os.path.dirname(__file__), "pro.tag.10.py")
+    print("🔥 Hot reload modda ishga tushdi - kod o'zgarganda avtomatik restart")
     
-    if not os.path.exists(script_path):
-        print(script_path + " fayli topilmadi!")
-        return
-
-    process = None
-    last_hash = get_file_hash(script_path)
-
-    print("Hot reload rejimi faol. " + script_path + " kuzatilmoqda...")
-    print("Fayl o'zgarganda bot avtomatik qayta ishga tushadi.")
-    print("To'xtatish uchun Ctrl+C bosing.")
-    sys.stdout.flush()
-
-    def start_bot():
-        nonlocal process
-        if process:
-            try:
-                process.terminate()
-                process.wait(timeout=5)
-            except:
-                try:
-                    process.kill()
-                except:
-                    pass
-        
-        print("Bot ishga tushirilmoqda: " + script_path)
-        sys.stdout.flush()
-        process = subprocess.Popen(
-            [sys.executable, script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-            encoding='utf-8',
-            errors='ignore'
-        )
-
-    start_bot()
-
+    # Botni boshlash
+    bot_process = subprocess.Popen([os.path.join('.venv', 'Scripts', 'python'), 'pro.tag.10.py'])
+    
+    # File change observer
+    event_handler = FileChangeHandler(bot_process)
+    observer = Observer()
+    observer.schedule(event_handler, path='.', recursive=False)
+    observer.start()
+    
     try:
         while True:
-            time.sleep(2)
-            
-            current_hash = get_file_hash(script_path)
-            if current_hash and current_hash != last_hash:
-                print(script_path + " o'zgardi. Qayta ishga tushirilmoqda...")
-                sys.stdout.flush()
-                last_hash = current_hash
-                start_bot()
-            
-            # Bot loglarini chiqarish
-            if process:
-                try:
-                    line = process.stdout.readline()
-                    if line:
-                        print(line.strip())
-                        sys.stdout.flush()
-                except:
-                    pass
-                    
+            time.sleep(1)
     except KeyboardInterrupt:
-        print("\nHot reload to'xtatildi.")
-        sys.stdout.flush()
-        if process:
-            process.terminate()
-
+        print("\n🛑 Hot reload to'xtatildi")
+        observer.stop()
+        if bot_process:
+            bot_process.terminate()
+            bot_process.wait()
+    
+    observer.join()
 
 if __name__ == "__main__":
     main()

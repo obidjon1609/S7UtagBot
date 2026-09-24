@@ -1,14 +1,22 @@
 @echo off
-setlocal
+echo ProTag.10 Botni ishga tushirish...
+
+REM Virtual environment yaratish
 if not exist .venv (
-    py -m venv .venv
+    echo Virtual environment yaratilmoqda...
+    python -m venv .venv
 )
-call .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-if not exist .env (
-    copy .env.example .env
-    echo .env yaratildi. Undagi BOT_TOKEN, API_ID va API_HASH qiymatlarini toldiring.
-    exit /b 1
-)
+
+REM Virtual environmentni aktivlashtirish
+call .venv\Scripts\activate
+
+REM Dependencies o'rnatish
+echo Dependencies o'rnatilmoqda...
+pip install --upgrade pip
+pip install -r requirements.txt
+
+REM Botni ishga tushirish
+echo Botni ishga tushirish...
 python pro.tag.10.py
+
+pause
