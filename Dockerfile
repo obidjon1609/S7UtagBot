@@ -17,4 +17,8 @@ COPY pro.tag.10.py .
 # Create data directory for persistent storage
 RUN mkdir -p /app/data
 
+# Set environment variables for Railway
+ENV PYTHONUNBUFFERED=1
+ENV RAILWAY_VOLUME_MOUNT_PATH=/app/data
+
 CMD ["python", "pro.tag.10.py"]

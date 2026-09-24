@@ -5,8 +5,10 @@
   },
   "deploy": {
     "startCommand": "python pro.tag.10.py",
-    "healthcheckPath": "/",
-    "healthcheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE"
+    "restartPolicyType": "ON_FAILURE",
+    "healthcheck": {
+      "path": "/",
+      "timeout": 300
+    }
   }
 }
