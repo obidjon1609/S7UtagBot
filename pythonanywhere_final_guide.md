@@ -78,7 +78,19 @@ DB_FILE=/home/yourusername/pro_tag_bot/database22.db
 SOURCE_FILE=/home/yourusername/pro_tag_bot/pro.tag.10.py
 ```
 
-## 6. Botni Test Qilish
+## 6. Webhookni O'chirish (Muhim!)
+
+Agar oldin bot webhook bilan ishlagan bo'lsa, webhookni o'chirish kerak:
+
+```bash
+cd ~/pro_tag_bot
+source myenv/bin/activate
+python delete_webhook.py
+```
+
+Bu Telegram webhookni o'chiradi va polling uchun tayyorlaydi.
+
+## 7. Botni Test Qilish
 
 ```bash
 cd ~/pro_tag_bot
@@ -88,7 +100,7 @@ python pro.tag.10.py
 
 Bot ishlayotganini tekshiring, keyin `Ctrl+C` bilan to'xtating.
 
-## 7. Always-on Task Sifatida Ishga Tushirish
+## 8. Always-on Task Sifatida Ishga Tushirish
 
 PythonAnywhere bepul planida background workers yo'q, lekin **scheduled task** orqali ishga tushirish mumkin:
 
@@ -106,11 +118,11 @@ cd /home/yourusername/pro_tag_bot && source myenv/bin/activate && python pro.tag
 - **Minute**: */5 (har 5 daqiqada restart)
 - **Save** tugmasini bosing
 
-## 8. Loglarni Kuzatish
+## 9. Loglarni Kuzatish
 
 "Tasks" -> "Always-on tasks" -> "Log" orqali bot loglarini ko'rishingiz mumkin.
 
-## 9. Muhim Eslatmalar
+## 10. Muhim Eslatmalar
 
 ### PythonAnywhere Bepul Plan Cheklovlari:
 - **To'liq bepul** - Pullik features yo'q
@@ -124,7 +136,7 @@ PythonAnywhere bepul planida `database22.db` fayli doimiy saqlanadi.
 ### Session Storage:
 Telethon sessiyalari bazada saqlanadi, shuning uchun qayta deploy'dan keyin ishlashi kerak.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### Bot ishlamayapti:
 - Loglarni tekshiring
@@ -141,7 +153,7 @@ source myenv/bin/activate
 pip install -r requirements.txt --upgrade
 ```
 
-## 11. Yangilash
+## 12. Yangilash
 
 Yangi versiyani deploy qilganda:
 1. Fayllarni yangilang

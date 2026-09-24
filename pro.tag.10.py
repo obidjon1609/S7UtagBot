@@ -4875,6 +4875,13 @@ async def load_existing_sessions():
 # ─────────────────────────────────────────────
 async def main():
     await init_db()
+    # Webhookni o'chirish (agar oldin webhook o'rnatilgan bo'lsa)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        log.info("Webhook deleted successfully")
+    except Exception as e:
+        log.warning(f"Webhook deletion warning: {e}")
+    
     await load_existing_sessions()
     asyncio.create_task(pro_expiration_checker())
     asyncio.create_task(bio_watcher())
