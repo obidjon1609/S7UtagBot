@@ -70,7 +70,6 @@ data_dir = os.getenv("RENDER_DISK_MOUNT_PATH",
             os.getenv("PYTHONANYWHERE_DATA_DIR", 
             os.path.dirname(__file__))))
 DB_FILE   = os.getenv("DB_FILE", os.path.join(data_dir, "database22.db"))
-
 AD_TEXT = "🤖 Powered by @master_utagbot 🚀 Bepul Utag xizmati | Bir bosishda tag 🤖."
 BIO_AD_TEXT = "🤖 Powered by @master_utagbot 🚀"
 AUTO_REPLY_AD = f"{AD_TEXT}\n🤖 @master_utagbot orqali avto javob qilindi."
@@ -125,6 +124,9 @@ CLOCK_DIGIT_STYLES = {
     "monospace": "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
 }
 
+# Auto-tag schedule
+_schedule_tasks: dict[int, asyncio.Task] = {}
+
 # ─────────────────────────────────────────────
 # STATES
 # ─────────────────────────────────────────────
@@ -163,6 +165,13 @@ class UserStatesGroup(StatesGroup):
     welcome_text           = State()
     goodbye_chat_id        = State()
     goodbye_text           = State()
+    schedule_chat_id       = State()
+    schedule_time          = State()
+    schedule_timezone      = State()
+    schedule_random_mode   = State()
+    bulk_chat_ids          = State()
+    bulk_random_mode       = State()
+    custom_pattern_text    = State()
 
 # ─────────────────────────────────────────────
 # DB
@@ -282,6 +291,45 @@ async def init_db():
             )
         await db.commit()
 
+        # Auto-tag schedule jadval
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tag_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            schedule_time TEXT NOT NULL,
+            timezone TEXT NOT NULL DEFAULT 'Asia/Tashkent',
+            random_mode INTEGER DEFAULT 0,
+            enabled INTEGER DEFAULT 1,
+            last_run TEXT,
+            created_at TEXT NOT NULL
+        )""")
+        await db.commit()
+
+        # Tag statistics jadval
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tag_statistics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            chat_title TEXT,
+            tagged_count INTEGER DEFAULT 0,
+            last_tagged_at TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(owner_id, chat_id)
+        )""")
+        await db.commit()
+
+        # Custom tag patterns jadval
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS custom_tag_patterns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )""")
+        await db.commit()
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS pm_preferences (
@@ -725,10 +773,29 @@ def parse_market_words(text: str) -> list[str]:
     return words[:200]
 
 
-def make_utag_text(user, word: str | None = None) -> tuple[str, object | None]:
+def make_utag_text(user, word: str | None = None, custom_pattern: str | None = None) -> tuple[str, object | None]:
     mention, entity = make_mention_text(user)
-    text = make_text_unique(mention) if not word else f"{mention}, {word}"
+
+    if custom_pattern:
+        # Custom patternda {username} o'rniga mention qo'yamiz
+        text = custom_pattern.replace("{username}", mention)
+    elif word:
+        text = f"{mention}, {word}"
+    else:
+        text = make_text_unique(mention)
+
     return text, entity
+
+
+async def get_custom_pattern(uid: str) -> str | None:
+    """Foydalanuvchining custom patternini olish."""
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute(
+            "SELECT pattern FROM custom_tag_patterns WHERE owner_id = ? AND enabled = 1",
+            (uid,)
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else None
 
 
 def build_auto_reply_text(response_text: str, pro: bool) -> str:
@@ -985,6 +1052,10 @@ def get_userbot_keyboard(acc_name: str | None) -> InlineKeyboardMarkup:
         kb.row(InlineKeyboardButton(text=f"🟢 Ulangan: {acc_name}", callback_data="noop"))
         kb.row(InlineKeyboardButton(text="ℹ️ Akkaunt ma'lumotlari", callback_data="account_info"))
         kb.row(InlineKeyboardButton(text="⏱ Profil soat", callback_data="profile_clock"))
+        kb.row(InlineKeyboardButton(text="⏰ Auto-tag Schedule", callback_data="schedule_menu"))
+        kb.row(InlineKeyboardButton(text="📊 Tag Statistics", callback_data="stats_menu"))
+        kb.row(InlineKeyboardButton(text="🚀 Bulk Tag", callback_data="bulk_menu"))
+        kb.row(InlineKeyboardButton(text="✏️ Custom Pattern", callback_data="custom_pattern_menu"))
         kb.row(InlineKeyboardButton(text="🚪 Akkauntdan chiqish", callback_data="logout_account"))
     else:
         kb.row(InlineKeyboardButton(text="📱 Akkaunt ulash", callback_data="add_main_account"))
@@ -1458,6 +1529,412 @@ async def cb_profile_clock_off(callback: CallbackQuery):
         reply_markup=get_profile_clock_keyboard(settings),
     )
 
+# ─────────────────────────────────────────────
+# AUTO-TAG SCHEDULE MENU
+# ─────────────────────────────────────────────
+@dp.callback_query(F.data == "schedule_menu")
+async def cb_schedule_menu(callback: CallbackQuery):
+    uid = str(callback.from_user.id)
+    if uid not in userbot_clients:
+        await callback.answer("❗ Avval akkaunt ulang!", show_alert=True)
+        return
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("""
+            SELECT id, chat_id, schedule_time, timezone, random_mode, enabled
+            FROM tag_schedules
+            WHERE owner_id = ?
+            ORDER BY id DESC
+        """, (uid,)) as cur:
+            schedules = await cur.fetchall()
+
+    if not schedules:
+        await callback.message.edit_text(
+            "⏰ <b>Auto-tag Schedule</b>\n\n"
+            "Hozircha hech qanday schedule yo'q.\n\n"
+            "Yangi schedule yaratish uchun quyidagi tugmani bosing:",
+            reply_markup=get_schedule_keyboard(uid)
+        )
+    else:
+        text = "⏰ <b>Auto-tag Schedule</b>\n\n"
+        for sched_id, chat_id, time, tz, random_mode, enabled in schedules:
+            status = "🟢" if enabled else "🔴"
+            mode = "Random" if random_mode else "Oddiy"
+            text += f"{status} <b>ID:{sched_id}</b> | {time} ({tz}) | {mode}\n"
+        await callback.message.edit_text(text, reply_markup=get_schedule_keyboard(uid))
+
+
+def get_schedule_keyboard(uid: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="➕ Yangi Schedule", callback_data="schedule_new"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="btn_userbot"))
+    return kb.as_markup()
+
+
+@dp.callback_query(F.data == "schedule_new")
+async def cb_schedule_new(callback: CallbackQuery, state: FSMContext):
+    uid = str(callback.from_user.id)
+    if uid not in userbot_clients:
+        await callback.answer("❗ Avval akkaunt ulang!", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        "⏰ <b>Yangi Schedule Yaratish</b>\n\n"
+        "Guruh ID sini yuboring (masalan: -1001234567890):\n\n"
+        "ID ni Telegramda Forward qilib topishingiz mumkin.",
+        reply_markup=back_kb("schedule_menu")
+    )
+    await state.set_state(UserStatesGroup.schedule_chat_id)
+
+
+@dp.message(StateFilter(UserStatesGroup.schedule_chat_id), F.text)
+async def schedule_chat_id_input(message: Message, state: FSMContext):
+    chat_id = message.text.strip()
+    if not chat_id.startswith("-"):
+        await message.answer("❌ Noto'g'ri guruh ID. Guruh ID odatda - bilan boshlanadi.")
+        return
+
+    await state.update_data(schedule_chat_id=chat_id)
+    await message.answer(
+        "⏰ Endi vaqtni kiriting (HH:MM formatida, masalan: 18:30):",
+        reply_markup=back_kb("schedule_menu")
+    )
+    await state.set_state(UserStatesGroup.schedule_time)
+
+
+@dp.message(StateFilter(UserStatesGroup.schedule_time), F.text)
+async def schedule_time_input(message: Message, state: FSMContext):
+    time_str = message.text.strip()
+    try:
+        datetime.strptime(time_str, "%H:%M")
+    except ValueError:
+        await message.answer("❌ Noto'g'ri vaqt formati. HH:MM formatida kiriting (masalan: 18:30).")
+        return
+
+    await state.update_data(schedule_time=time_str)
+    await message.answer(
+        "⏰ Vaqt mintaqasini tanlang:",
+        reply_markup=get_schedule_timezone_keyboard()
+    )
+    await state.set_state(UserStatesGroup.schedule_timezone)
+
+
+def get_schedule_timezone_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for key, (label, _) in PROFILE_TIMEZONES.items():
+        kb.row(InlineKeyboardButton(text=label, callback_data=f"schedule_tz:{key}"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="schedule_menu"))
+    return kb.as_markup()
+
+
+@dp.callback_query(F.data.startswith("schedule_tz:"))
+async def cb_schedule_timezone(callback: CallbackQuery, state: FSMContext):
+    key = callback.data.split(":")[1]
+    timezone_option = PROFILE_TIMEZONES.get(key)
+    if not timezone_option:
+        await callback.answer("❌ Vaqt mintaqasi topilmadi.", show_alert=True)
+        return
+
+    label, tz_name = timezone_option
+    await state.update_data(schedule_timezone=tz_name)
+    await callback.message.edit_text(
+        f"✅ Vaqt mintaqasi: <b>{label}</b>\n\n"
+        "Random rejimni tanlaysizmi?\n\n"
+        "Random rejimda har bir userga random so'z qo'shiladi.",
+        reply_markup=get_schedule_random_mode_keyboard()
+    )
+    await state.set_state(UserStatesGroup.schedule_random_mode)
+
+
+def get_schedule_random_mode_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="✅ Random rejim", callback_data="schedule_random:1"))
+    kb.row(InlineKeyboardButton(text="❌ Oddiy rejim", callback_data="schedule_random:0"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="schedule_menu"))
+    return kb.as_markup()
+
+
+@dp.callback_query(F.data.startswith("schedule_random:"))
+async def cb_schedule_random_mode(callback: CallbackQuery, state: FSMContext):
+    random_mode = callback.data.split(":")[1] == "1"
+    await state.update_data(schedule_random_mode=random_mode)
+
+    data = await state.get_data()
+    chat_id = data.get("schedule_chat_id")
+    time_str = data.get("schedule_time")
+    tz = data.get("schedule_timezone")
+
+    uid = str(callback.from_user.id)
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("""
+            INSERT INTO tag_schedules (owner_id, chat_id, schedule_time, timezone, random_mode, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (uid, chat_id, time_str, tz, int(random_mode), datetime.now(timezone.utc).isoformat()))
+        await db.commit()
+
+    await state.clear()
+    await callback.answer("✅ Schedule yaratildi!")
+    await callback.message.edit_text(
+        "⏰ <b>Auto-tag Schedule</b>\n\n"
+        f"✅ Yangi schedule yaratildi!\n\n"
+        f"📍 Guruh: {chat_id}\n"
+        f"⏰ Vaqt: {time_str} ({tz})\n"
+        f"🎲 Rejim: {'Random' if random_mode else 'Oddiy'}\n\n"
+        "Schedule har kuni shu vaqtda avtomatik tag qiladi.",
+        reply_markup=get_schedule_keyboard(uid)
+    )
+
+# ─────────────────────────────────────────────
+# TAG STATISTICS MENU
+# ─────────────────────────────────────────────
+@dp.callback_query(F.data == "stats_menu")
+async def cb_stats_menu(callback: CallbackQuery):
+    uid = str(callback.from_user.id)
+    if uid not in userbot_clients:
+        await callback.answer("❗ Avval akkaunt ulang!", show_alert=True)
+        return
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("""
+            SELECT chat_id, chat_title, tagged_count, last_tagged_at
+            FROM tag_statistics
+            WHERE owner_id = ?
+            ORDER BY tagged_count DESC
+            LIMIT 10
+        """, (uid,)) as cur:
+            stats = await cur.fetchall()
+
+    if not stats:
+        await callback.message.edit_text(
+            "📊 <b>Tag Statistics</b>\n\n"
+            "Hozircha hech qanday statistika yo'q.\n\n"
+            "Guruhlarda .su yoki .ru commandlarini ishlatganingizdan so'ng "
+            "bu yerda statistika ko'rinadi.",
+            reply_markup=back_kb("btn_userbot")
+        )
+    else:
+        text = "📊 <b>Tag Statistics (Top 10)</b>\n\n"
+        total_tagged = 0
+        for chat_id, chat_title, count, last_tagged in stats:
+            title = chat_title or f"Guruh {chat_id}"
+            total_tagged += count
+            text += f"📍 <b>{title}</b>\n"
+            text += f"   Tag qilingan: <b>{count}</b>\n"
+            if last_tagged:
+                text += f"   Oxirgi: {last_tagged[:16]}\n"
+            text += "\n"
+
+        text += f"📈 Jami tag qilingan: <b>{total_tagged}</b>"
+        await callback.message.edit_text(text, reply_markup=back_kb("btn_userbot"))
+
+# ─────────────────────────────────────────────
+# BULK TAG MENU
+# ─────────────────────────────────────────────
+@dp.callback_query(F.data == "bulk_menu")
+async def cb_bulk_menu(callback: CallbackQuery, state: FSMContext):
+    uid = str(callback.from_user.id)
+    if uid not in userbot_clients:
+        await callback.answer("❗ Avval akkaunt ulang!", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        "🚀 <b>Bulk Tag</b>\n\n"
+        "Bir nechta guruhlarda bir vaqtda tag qilish uchun "
+        "guruh ID larni yuboring.\n\n"
+        "Har bir ID ni yangi qatordan yozing (masalan):\n"
+        "-1001234567890\n"
+        "-1009876543210\n"
+        "-1005555555555",
+        reply_markup=back_kb("btn_userbot")
+    )
+    await state.set_state(UserStatesGroup.bulk_chat_ids)
+
+
+@dp.message(StateFilter(UserStatesGroup.bulk_chat_ids), F.text)
+async def bulk_chat_ids_input(message: Message, state: FSMContext):
+    chat_ids = [line.strip() for line in message.text.split("\n") if line.strip() and line.strip().startswith("-")]
+
+    if not chat_ids:
+        await message.answer("❌ Hech qanday to'g'ri guruh ID topilmadi. ID lar - bilan boshlanishi kerak.")
+        return
+
+    await state.update_data(bulk_chat_ids=chat_ids)
+    await message.answer(
+        f"✅ <b>{len(chat_ids)}</b> ta guruh topildi.\n\n"
+        "Random rejimni tanlaysizmi?\n\n"
+        "Random rejimda har bir userga random so'z qo'shiladi.",
+        reply_markup=get_bulk_random_mode_keyboard()
+    )
+    await state.set_state(UserStatesGroup.bulk_random_mode)
+
+
+def get_bulk_random_mode_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="✅ Random rejim", callback_data="bulk_random:1"))
+    kb.row(InlineKeyboardButton(text="❌ Oddiy rejim", callback_data="bulk_random:0"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="btn_userbot"))
+    return kb.as_markup()
+
+
+@dp.callback_query(F.data.startswith("bulk_random:"))
+async def cb_bulk_random_mode(callback: CallbackQuery, state: FSMContext):
+    random_mode = callback.data.split(":")[1] == "1"
+    await state.update_data(bulk_random_mode=random_mode)
+
+    data = await state.get_data()
+    chat_ids = data.get("bulk_chat_ids")
+
+    uid = str(callback.from_user.id)
+    client = userbot_clients.get(uid)
+
+    if not client:
+        await callback.answer("❗ Akkaunt topilmadi!", show_alert=True)
+        await state.clear()
+        return
+
+    await state.clear()
+    await callback.answer("🚀 Bulk tag boshlandi!")
+    await callback.message.edit_text(
+        f"🚀 <b>Bulk Tag</b>\n\n"
+        f"✅ <b>{len(chat_ids)}</b> ta guruhda tag boshlandi...\n\n"
+        f"🎲 Rejim: {'Random' if random_mode else 'Oddiy'}\n\n"
+        "Jarayon tugaganda statistikani ko'rishingiz mumkin.",
+        reply_markup=back_kb("btn_userbot")
+    )
+
+    # Bulk tag task
+    asyncio.create_task(do_bulk_tag(client, uid, chat_ids, random_mode))
+
+
+async def do_bulk_tag(client: TelegramClient, uid: str, chat_ids: list[str], random_mode: bool):
+    """Bir nechta guruhlarda tag qilish."""
+    delay = await get_utag_delay(uid)
+    market_words = await get_user_words(uid) if random_mode else []
+
+    if random_mode and not market_words:
+        try:
+            # Random rejimda so'zlar bo'lmasa, oddiy rejimga o'tamiz
+            random_mode = False
+        except Exception:
+            pass
+
+    for chat_id in chat_ids:
+        try:
+            # Mock event yaratish
+            class MockEvent:
+                def __init__(self, chat_id):
+                    self.chat_id = chat_id
+                async def get_chat(self):
+                    from telethon.tl.types import InputPeerChannel
+                    return InputPeerChannel(int(chat_id))
+
+            mock_event = MockEvent(chat_id)
+            await do_utag(client, uid, mock_event, random_mode=random_mode)
+
+            # Keyingi guruhga o'tishdan oldin kutish
+            await asyncio.sleep(5)
+        except Exception as e:
+            log.error(f"Bulk tag error for chat {chat_id}: {e}")
+            continue
+
+# ─────────────────────────────────────────────
+# CUSTOM TAG PATTERN MENU
+# ─────────────────────────────────────────────
+@dp.callback_query(F.data == "custom_pattern_menu")
+async def cb_custom_pattern_menu(callback: CallbackQuery, state: FSMContext):
+    uid = str(callback.from_user.id)
+    if uid not in userbot_clients:
+        await callback.answer("❗ Avval akkaunt ulang!", show_alert=True)
+        return
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        async with db.execute("""
+            SELECT id, pattern, enabled
+            FROM custom_tag_patterns
+            WHERE owner_id = ?
+            ORDER BY id DESC
+        """, (uid,)) as cur:
+            patterns = await cur.fetchall()
+
+    if not patterns:
+        await callback.message.edit_text(
+            "✏️ <b>Custom Tag Pattern</b>\n\n"
+            "Hozircha hech qanday custom pattern yo'q.\n\n"
+            "Custom pattern yaratish uchun quyidagi tugmani bosing.\n\n"
+            "Patternda <code>{username}</code> dan foydalaning. "
+            "Masalan: <code>Salom {username}, siz yaxshimisiz?</code>",
+            reply_markup=get_custom_pattern_keyboard()
+        )
+    else:
+        text = "✏️ <b>Custom Tag Pattern</b>\n\n"
+        for pattern_id, pattern, enabled in patterns:
+            status = "🟢" if enabled else "🔴"
+            text += f"{status} <b>ID:{pattern_id}</b>\n"
+            text += f"   {pattern[:50]}...\n\n"
+        await callback.message.edit_text(text, reply_markup=get_custom_pattern_keyboard())
+
+
+def get_custom_pattern_keyboard() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="➕ Yangi Pattern", callback_data="custom_pattern_new"))
+    kb.row(InlineKeyboardButton(text="⬅️ Orqaga", callback_data="btn_userbot"))
+    return kb.as_markup()
+
+
+@dp.callback_query(F.data == "custom_pattern_new")
+async def cb_custom_pattern_new(callback: CallbackQuery, state: FSMContext):
+    uid = str(callback.from_user.id)
+    if uid not in userbot_clients:
+        await callback.answer("❗ Avval akkaunt ulang!", show_alert=True)
+        return
+
+    await state.clear()
+    await callback.message.edit_text(
+        "✏️ <b>Yangi Custom Pattern Yaratish</b>\n\n"
+        "Pattern matnini kiriting.\n\n"
+        "<code>{username}</code> dan foydalaning. Masalan:\n"
+        "<code>Salom {username}, nima qilyapsiz?</code>\n\n"
+        "Agar pattern yoqilgan bo'lsa, tag qilinganda "
+        "har bir username o'rniga bu pattern ishlatiladi.",
+        reply_markup=back_kb("custom_pattern_menu")
+    )
+    await state.set_state(UserStatesGroup.custom_pattern_text)
+
+
+@dp.message(StateFilter(UserStatesGroup.custom_pattern_text), F.text)
+async def custom_pattern_text_input(message: Message, state: FSMContext):
+    pattern = message.text.strip()
+    if not pattern:
+        await message.answer("❌ Pattern bo'sh bo'lmasin.")
+        return
+
+    if "{username}" not in pattern:
+        await message.answer("❌ Pattern ichida <code>{username}</code> bo'lishi shart.")
+        return
+
+    uid = str(message.from_user.id)
+
+    async with aiosqlite.connect(DB_FILE) as db:
+        # Avvalgi patternlarni o'chirish
+        await db.execute("UPDATE custom_tag_patterns SET enabled = 0 WHERE owner_id = ?", (uid,))
+        # Yangi pattern qo'shish
+        await db.execute("""
+            INSERT INTO custom_tag_patterns (owner_id, pattern, enabled, created_at)
+            VALUES (?, ?, 1, ?)
+        """, (uid, pattern, datetime.now(timezone.utc).isoformat()))
+        await db.commit()
+
+    await state.clear()
+    await message.answer(
+        "✅ Custom pattern saqlandi!\n\n"
+        f"Pattern: <code>{pattern}</code>\n\n"
+        "Endi tag qilinganda bu pattern ishlatiladi.",
+        reply_markup=get_userbot_keyboard("Ulangan")
+    )
+
 @dp.callback_query(F.data == "account_info")
 async def cb_account_info(callback: CallbackQuery):
     uid = str(callback.from_user.id)
@@ -1630,12 +2107,18 @@ async def cb_logout(callback: CallbackQuery, state: FSMContext):
 async def do_utag(client: TelegramClient, uid: str, event, random_mode: bool = False):
     """.su oddiy tag qiladi, .ru esa foydalanuvchi tanlagan market so'zlaridan foydalanadi."""
     chat = await event.get_chat()
+    chat_id = str(getattr(chat, 'id', event.chat_id))
+    chat_title = getattr(chat, 'title', None)
+
     pro_until = None
     async with aiosqlite.connect(DB_FILE) as db:
         async with db.execute("SELECT pro_until FROM users WHERE id = ?", (uid,)) as cur:
             row = await cur.fetchone()
         pro_until = row[0] if row else None
     pro = is_pro_user(pro_until)
+
+    # Custom pattern ni olish
+    custom_pattern = await get_custom_pattern(uid)
 
     try:
         # Guruh a'zolarini bevosita olamiz. iter_messages() faqat xabar
@@ -1648,7 +2131,7 @@ async def do_utag(client: TelegramClient, uid: str, event, random_mode: bool = F
         delay = await get_utag_delay(uid)
         tagged = 0
         market_words = await get_user_words(uid) if random_mode else []
-        if random_mode and not market_words:
+        if random_mode and not market_words and not custom_pattern:
             try:
                 await client.send_message(chat, "❌ .ru uchun hali So'zlar Marketidan so'z tanlanmagan. Botdagi 🛒 So'zlar marketi bo'limidan tanlang.")
             except Exception:
@@ -1665,7 +2148,7 @@ async def do_utag(client: TelegramClient, uid: str, event, random_mode: bool = F
                 # Telegramning haqiqiy MentionName entitysi ishlatiladi.
                 # Shu sababli profil yashirin bo'lsa ham bosilganda o'sha user ochiladi.
                 word = random.choice(market_words) if random_mode else None
-                tag_text, tag_entity = make_utag_text(user, word=word)
+                tag_text, tag_entity = make_utag_text(user, word=word, custom_pattern=custom_pattern)
                 if tag_entity:
                     await client.send_message(
                         chat,
@@ -1683,6 +2166,20 @@ async def do_utag(client: TelegramClient, uid: str, event, random_mode: bool = F
             except Exception as e:
                 log.error(f"Tag xatosi: {e}")
                 continue
+
+        # Statistikani yangilash
+        if tagged > 0:
+            async with aiosqlite.connect(DB_FILE) as db:
+                await db.execute("""
+                    INSERT INTO tag_statistics (owner_id, chat_id, chat_title, tagged_count, last_tagged_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_id, chat_id) DO UPDATE SET
+                        tagged_count = tagged_count + ?,
+                        last_tagged_at = ?,
+                        chat_title = ?
+                """, (uid, chat_id, chat_title, tagged, datetime.now(timezone.utc).isoformat(),
+                      datetime.now(timezone.utc).isoformat(), tagged, datetime.now(timezone.utc).isoformat(), chat_title))
+                await db.commit()
 
         # Jarayon tugadi yoki to'xtatildi — reklama (pro bo'lmasa)
         if not pro:
@@ -4871,6 +5368,78 @@ async def load_existing_sessions():
             log.error(f"Sessiya yuklashda xato ({uid}): {e}")
 
 # ─────────────────────────────────────────────
+# AUTO-TAG SCHEDULER
+# ─────────────────────────────────────────────
+async def tag_schedule_checker():
+    """Har 1 daqiqada schedule larni tekshiradi va vaqt kelganda tag qiladi."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            async with aiosqlite.connect(DB_FILE) as db:
+                async with db.execute("""
+                    SELECT id, owner_id, chat_id, schedule_time, timezone, random_mode, last_run
+                    FROM tag_schedules
+                    WHERE enabled = 1
+                """) as cur:
+                    schedules = await cur.fetchall()
+
+            for schedule_id, owner_id, chat_id, schedule_time, tz, random_mode, last_run in schedules:
+                try:
+                    # Vaqtni hisoblash
+                    user_tz = ZoneInfo(tz)
+                    now_tz = now.astimezone(user_tz)
+                    current_time = now_tz.strftime("%H:%M")
+
+                    # Bugun allaqachon tag qilinganmi?
+                    if last_run:
+                        last_run_dt = datetime.fromisoformat(last_run)
+                        last_run_tz = last_run_dt.astimezone(user_tz)
+                        if last_run_tz.date() == now_tz.date():
+                            continue  # Bugun allaqachon tag qilingan
+
+                    # Vaqt kelganda tag qilish
+                    if current_time == schedule_time:
+                        if owner_id in userbot_clients:
+                            client = userbot_clients[owner_id]
+                            # Mock event yaratish
+                            class MockEvent:
+                                def __init__(self, chat_id):
+                                    self.chat_id = chat_id
+                                async def get_chat(self):
+                                    from telethon.tl.types import InputPeerChannel
+                                    return InputPeerChannel(int(chat_id))
+
+                            mock_event = MockEvent(chat_id)
+                            await do_utag(client, owner_id, mock_event, random_mode=bool(random_mode))
+
+                            # Last_run yangilash
+                            async with aiosqlite.connect(DB_FILE) as db:
+                                await db.execute(
+                                    "UPDATE tag_schedules SET last_run = ? WHERE id = ?",
+                                    (now.isoformat(), schedule_id)
+                                )
+                                await db.commit()
+                except Exception as e:
+                    log.error(f"Schedule {schedule_id} execution error: {e}")
+
+        except Exception as e:
+            log.error(f"Schedule checker error: {e}")
+
+        await asyncio.sleep(60)  # Har 1 daqiqada tekshirish
+
+def stop_schedule(schedule_id: int):
+    """Schedule taskni to'xtatish."""
+    if schedule_id in _schedule_tasks:
+        _schedule_tasks[schedule_id].cancel()
+        del _schedule_tasks[schedule_id]
+
+def start_all_schedules():
+    """Barcha active schedule larni ishga tushirish."""
+    if not _schedule_tasks:
+        # Faqat bitta global checker ishlaydi
+        _schedule_tasks[0] = asyncio.create_task(tag_schedule_checker())
+
+# ─────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────
 async def main():
@@ -4887,6 +5456,7 @@ async def main():
     asyncio.create_task(bio_watcher())
     asyncio.create_task(virtual_number_expiry_checker())
     asyncio.create_task(weekly_report_scheduler())
+    asyncio.create_task(tag_schedule_checker())
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
